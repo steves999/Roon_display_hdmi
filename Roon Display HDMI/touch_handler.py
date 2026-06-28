@@ -2,15 +2,6 @@
 touch_handler.py — Touch input handler for Roon Display HDMI
 Reads touch events from evdev and triggers Roon API commands.
 All thresholds and actions configurable via config.json.
-
-Gestures:
-  Long press (anywhere)  : configurable action (default: heat_pump)
-  Left zone tap          : configurable (default: volume_down)
-  Right zone tap         : configurable (default: volume_up)
-  Centre tap             : configurable (default: toggle_text)
-  Centre double tap      : configurable (default: play_pause)
-  Swipe left             : configurable (default: next)
-  Swipe right            : configurable (default: previous)
 """
 
 import threading
@@ -20,7 +11,8 @@ import json
 import os
 import subprocess
 
-CONFIG_FILE = os.path.expanduser("~/config.json")
+CONFIG_FILE  = os.path.expanduser("~/config.json")
+BROWSER_SCRIPT = os.path.expanduser("~/launch_browser.sh")
 
 _defaults = {
     "touch_swipe_min_dx":        250,
@@ -40,9 +32,11 @@ _defaults = {
     "touch_action_swipe_left":  "next",
     "touch_action_swipe_right": "previous",
     "heat_pump_url":        "http://192.168.8.118:5000/",
+    "display_rotation":     0,
 }
 
 W = 1280
+H = 800
 
 _show_text      = True
 _text_lock      = threading.Lock()
@@ -55,6 +49,7 @@ _output_id      = None
 _browser_proc   = None
 _browser_lock   = threading.Lock()
 _last_vol_pct   = 50.0
+_browser_active = False
 
 
 def _load_touch_cfg():
@@ -69,6 +64,17 @@ def _load_touch_cfg():
         except:
             pass
     return cfg
+
+
+def _transform(x, y, dx, dy, rotation):
+    """Transform touch position and delta to match display rotation."""
+    if rotation == 180:
+        return W - x, H - y, -dx, -dy
+    elif rotation == 90:
+        return y, W - x, dy, -dx
+    elif rotation == 270:
+        return H - y, x, -dy, dx
+    return x, y, dx, dy
 
 
 def configure(bridge, zone_id, output_id, vol_pct=None):
@@ -102,20 +108,20 @@ def is_browser_open():
 
 
 def _launch_browser(url):
-    global _browser_proc
+    global _browser_proc, _browser_active
     with _browser_lock:
         if _browser_proc is not None and _browser_proc.poll() is None:
             return
         print(f"[Touch] Launching browser: {url}")
         try:
+            cfg      = _load_touch_cfg()
+            rotation = str(cfg.get("display_rotation", 0))
             _browser_proc = subprocess.Popen(
-                ["startx", "/usr/bin/chromium",
-                 "--kiosk", "--noerrdialogs", "--disable-infobars",
-                 "--disable-session-crashed-bubble",
-                 url, "--", ":1"],
+                ["startx", BROWSER_SCRIPT, url, rotation, "--", ":1"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
+            _browser_active = True
             if _callback:
                 _callback("browser_open", url)
         except Exception as e:
@@ -123,7 +129,7 @@ def _launch_browser(url):
 
 
 def _close_browser():
-    global _browser_proc
+    global _browser_proc, _browser_active
     with _browser_lock:
         print("[Touch] Closing browser")
         try:
@@ -135,7 +141,8 @@ def _close_browser():
                 pass
         except Exception as e:
             print(f"[Touch] Browser close error: {e}")
-        _browser_proc = None
+        _browser_proc   = None
+        _browser_active = False
         if _callback:
             _callback("browser_closed", None)
 
@@ -150,7 +157,6 @@ def _find_touch_device():
                 abs_codes = [c for c, _ in caps[evdev.ecodes.EV_ABS]]
                 if evdev.ecodes.ABS_MT_POSITION_X in abs_codes:
                     print(f"[Touch] Found device: {dev.name} at {dev.path}")
-                    dev.grab()
                     return dev
         print("[Touch] No touch device found")
         return None
@@ -211,7 +217,8 @@ def _do_action(action, cfg):
         if is_browser_open():
             _close_browser()
         else:
-            _launch_browser(cfg["heat_pump_url"])
+            cfg2 = _load_touch_cfg()
+            _launch_browser(cfg2["heat_pump_url"])
         return
     elif action == "none":
         return
@@ -234,7 +241,7 @@ def _process_touch(x, y, dx, dy, duration_ms, cfg):
             _do_action(cfg["touch_action_swipe_right"], cfg)
         return "swipe"
 
-    # Tap
+    # Tap — zones based on transformed x
     if abs(dx) <= cfg["touch_tap_max_move"] and abs(dy) <= cfg["touch_tap_max_move"]:
         if x < left_boundary:
             _do_action(cfg["touch_action_left"], cfg)
@@ -278,10 +285,13 @@ def _touch_loop():
 
         def fire_long_press():
             nonlocal long_fired
-            cfg = _load_touch_cfg()
             long_fired = True
             print(f"[Touch] Long press")
-            _do_action(cfg["touch_action_long"], cfg)
+            if _browser_active:
+                _close_browser()
+            else:
+                cfg = _load_touch_cfg()
+                _do_action(cfg["touch_action_long"], cfg)
 
         try:
             for event in dev.read_loop():
@@ -300,7 +310,7 @@ def _touch_loop():
                             start_x    = touch_x
                             start_y    = touch_y
                             start_time = time.time()
-                            cfg_now = _load_touch_cfg()
+                            cfg_now    = _load_touch_cfg()
                             long_timer = threading.Timer(
                                 cfg_now["touch_long_press_ms"] / 1000.0,
                                 fire_long_press
@@ -308,15 +318,30 @@ def _touch_loop():
                             long_timer.start()
                         else:
                             cancel_long_timer()
+
+                            # Browser open — pass touches through, long press closes
+                            if _browser_active:
+                                touching   = False
+                                long_fired = False
+                                start_x    = None
+                                continue
+
                             if touching and start_x is not None and not long_fired:
-                                cfg      = _load_touch_cfg()
-                                now      = time.time()
-                                dur_ms   = int((now - start_time) * 1000)
-                                dx       = touch_x - start_x
-                                dy       = touch_y - start_y
-                                mid_x    = (touch_x + start_x) // 2
-                                mid_y    = (touch_y + start_y) // 2
-                                gesture  = _process_touch(mid_x, mid_y, dx, dy, dur_ms, cfg)
+                                cfg       = _load_touch_cfg()
+                                now       = time.time()
+                                dur_ms    = int((now - start_time) * 1000)
+                                raw_dx    = touch_x - start_x
+                                raw_dy    = touch_y - start_y
+                                raw_mid_x = (touch_x + start_x) // 2
+                                raw_mid_y = (touch_y + start_y) // 2
+
+                                # Transform for display rotation
+                                rotation = cfg.get("display_rotation", 0)
+                                mid_x, mid_y, dx, dy = _transform(
+                                    raw_mid_x, raw_mid_y, raw_dx, raw_dy, rotation
+                                )
+
+                                gesture = _process_touch(mid_x, mid_y, dx, dy, dur_ms, cfg)
 
                                 if gesture == "centre_tap":
                                     elapsed = (now - last_tap_time) * 1000

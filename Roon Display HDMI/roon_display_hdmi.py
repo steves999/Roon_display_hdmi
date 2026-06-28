@@ -15,6 +15,81 @@ CONFIG_FILE = os.path.expanduser("~/config.json")
 W = 1280
 H = 800
 
+# Available fonts — (display name, bold path, regular path)
+FONTS = {
+    "TeX Gyre Heros": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheros-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheros-regular.otf",
+    ),
+    "TeX Gyre Heros Condensed": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheroscn-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheroscn-regular.otf",
+    ),
+    "TeX Gyre Pagella": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrepagella-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrepagella-regular.otf",
+    ),
+    "TeX Gyre Bonum": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrebonum-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrebonum-regular.otf",
+    ),
+    "TeX Gyre Termes": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyretermes-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyretermes-regular.otf",
+    ),
+    "TeX Gyre Adventor": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreadventor-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreadventor-regular.otf",
+    ),
+    "TeX Gyre Cursor": (
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrecursor-bold.otf",
+        "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyrecursor-regular.otf",
+    ),
+    "Roboto": (
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Regular.ttf",
+    ),
+    "Roboto Light": (
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Medium.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Light.ttf",
+    ),
+    "Roboto Condensed": (
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-Bold.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-Regular.ttf",
+    ),
+    "Liberation Sans": (
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ),
+    "Liberation Serif": (
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    ),
+    "Liberation Mono": (
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+    ),
+    "DejaVu Sans": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ),
+    "DejaVu Serif": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    ),
+    "DejaVu Mono": (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    ),
+}
+
+DEFAULT_FONT = "TeX Gyre Heros"
+
+def get_font_paths(font_name):
+    """Return (bold_path, regular_path) for a font name, falling back to default."""
+    return FONTS.get(font_name, FONTS[DEFAULT_FONT])
+
+
 DEFAULT_CONFIG = {
     "bridge": "http://192.168.8.118:3001",
     "target_zone": "Lounge",
@@ -27,6 +102,8 @@ DEFAULT_CONFIG = {
     "size_album": 42,
     "size_track": 42,
     "line_spacing": 10,
+    "line_spacing_artist": 16,
+    "artist_bold": True,
     "text_bg_opacity": 180,
     "text_bg_blur": 16,
     "progress_bar_height": 5,
@@ -37,6 +114,11 @@ DEFAULT_CONFIG = {
     "clock_cx": 900,
     "clock_date_cx": 260,
     "clock_flip": False,
+    "clock_day_size": 70,
+    "clock_date_size": 66,
+    "clock_text_y_offset": 0,
+    "font_track": "TeX Gyre Heros",
+    "font_clock": "TeX Gyre Heros",
     "silence_threshold": 50,
     "silence_timeout": 30,
     "sample_interval": 30,
@@ -89,8 +171,6 @@ def maybe_reload_config():
             print("Config reloaded")
 
 FB = "/dev/fb0"
-FONT_BOLD = "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheros-bold.otf"
-FONT_REG  = "/usr/share/texmf/fonts/opentype/public/tex-gyre/texgyreheros-regular.otf"
 PAD        = 16
 MARGIN     = 20
 MAX_TEXT_W = 768
@@ -266,10 +346,13 @@ def draw_clock_on_canvas(canvas, show_mic=False):
     draw.line([cx, cy, mx, my], fill=(255, 255, 255), width=6)
     draw.ellipse([cx - 10, cy - 10, cx + 10, cy + 10], fill=(255, 255, 255))
 
+    # Clock fonts
+    clock_bold, clock_reg = get_font_paths(cfg.get("font_clock", DEFAULT_FONT))
+    font_day  = ImageFont.truetype(clock_bold, cfg.get("clock_day_size", 70))
+    font_date = ImageFont.truetype(clock_reg,  cfg.get("clock_date_size", 66))
+
     day_str  = now.strftime("%A")
     date_str = now.strftime("%-d %B %y")
-    font_day  = ImageFont.truetype(FONT_BOLD, 70)
-    font_date = ImageFont.truetype(FONT_REG,  66)
 
     def text_w(text, font):
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -279,7 +362,8 @@ def draw_clock_on_canvas(canvas, show_mic=False):
     dtw, dth = text_w(date_str, font_date)
     gap     = 24
     total_h = dh + gap + dth
-    text_y  = (H - total_h) // 2
+    y_offset = cfg.get("clock_text_y_offset", 0)
+    text_y  = (H - total_h) // 2 + y_offset
     draw.text((date_cx - dw  // 2, text_y),            day_str,  font=font_day,  fill=(255, 255, 255))
     draw.text((date_cx - dtw // 2, text_y + dh + gap), date_str, font=font_date, fill=(180, 180, 180))
 
@@ -335,18 +419,21 @@ def measure_text(text, font):
     return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
 def make_text_overlay(artist, album, track, scroll_line=None, scroll_offset=0, source='roon'):
-    font_artist = ImageFont.truetype(FONT_BOLD, cfg["size_artist"])
-    font_album  = ImageFont.truetype(FONT_REG,  cfg["size_album"])
-    font_track  = ImageFont.truetype(FONT_REG,  cfg["size_track"])
+    track_bold, track_reg = get_font_paths(cfg.get("font_track", DEFAULT_FONT))
+    artist_font_path = track_bold if cfg.get("artist_bold", True) else track_reg
+    font_artist = ImageFont.truetype(artist_font_path, cfg["size_artist"])
+    font_album  = ImageFont.truetype(track_reg,  cfg["size_album"])
+    font_track  = ImageFont.truetype(track_reg,  cfg["size_track"])
 
     aw, ah = measure_text(artist, font_artist)
     lw, lh = measure_text(album,  font_album)
     tw, th = measure_text(track,  font_track)
 
-    ls = cfg["line_spacing"]
-    display_w = max(aw, lw, tw)
-    block_w   = display_w + PAD * 2
-    block_h   = ah + lh + th + ls * 2 + PAD * 2
+    ls         = cfg["line_spacing"]
+    ls_artist  = cfg.get("line_spacing_artist", ls)
+    display_w  = max(aw, lw, tw)
+    block_w    = display_w + PAD * 2
+    block_h    = ah + lh + th + ls_artist + ls + PAD * 2
 
     x = MARGIN
     y = H - block_h - MARGIN - cfg["progress_bar_height"] - 6
@@ -376,13 +463,13 @@ def make_text_overlay(artist, album, track, scroll_line=None, scroll_offset=0, s
 
     ty = y + PAD
     draw_line(artist, font_artist, ty, (255, 255, 255, 255), 'artist')
-    ty += ah + ls
+    ty += ah + ls_artist
     draw_line(album,  font_album,  ty, (220, 220, 220, 255), 'album')
     ty += lh + ls
     draw_line(track,  font_track,  ty, (220, 220, 220, 255), 'track')
 
     if source == 'shazam':
-        font_icon = ImageFont.truetype(FONT_REG, 32)
+        font_icon = ImageFont.truetype(track_reg, 32)
         overlay_draw.text((W - 40, H - 40), '♩', font=font_icon, fill=(180, 180, 180, 200))
 
     return overlay
@@ -404,7 +491,6 @@ def fade_out_overlay(base, overlay, seek_pos, length):
         if not zone_check or zone_check["state"] != "playing":
             break
         fade_alpha = 1.0 - (step / steps)
-        # Scale overlay alpha channel
         r, g, b, a = overlay.convert('RGBA').split()
         a = a.point(lambda p: int(p * fade_alpha))
         faded = Image.merge('RGBA', (r, g, b, a))
@@ -419,9 +505,11 @@ def fade_out_overlay(base, overlay, seek_pos, length):
 
 def display_roon(base, artist, album, track, seek_pos, length, radio=False, track_id=None):
     global _touch_show_text
-    font_artist = ImageFont.truetype(FONT_BOLD, cfg["size_artist"])
-    font_album  = ImageFont.truetype(FONT_REG,  cfg["size_album"])
-    font_track  = ImageFont.truetype(FONT_REG,  cfg["size_track"])
+    track_bold, track_reg = get_font_paths(cfg.get("font_track", DEFAULT_FONT))
+    artist_font_path = track_bold if cfg.get("artist_bold", True) else track_reg
+    font_artist = ImageFont.truetype(artist_font_path, cfg["size_artist"])
+    font_album  = ImageFont.truetype(track_reg,  cfg["size_album"])
+    font_track  = ImageFont.truetype(track_reg,  cfg["size_track"])
 
     aw, _ = measure_text(artist, font_artist)
     lw, _ = measure_text(album,  font_album)
@@ -458,7 +546,6 @@ def display_roon(base, artist, album, track, seek_pos, length, radio=False, trac
             overlay = make_text_overlay(artist, album, track, source='roon')
             write_fb(composite(base, overlay, seek_pos, length))
 
-    # Text hold
     for _ in range(cfg["text_hold"]):
         zone_check = get_zone()
         if not zone_check or zone_check["state"] != "playing":
@@ -468,14 +555,12 @@ def display_roon(base, artist, album, track, seek_pos, length, radio=False, trac
         write_fb(composite(base, overlay, seek_pos, length))
         time.sleep(1)
 
-    # Fade out text overlay
     zone_check = get_zone()
     if zone_check and zone_check["state"] == "playing":
         seek_pos = zone_check["now_playing"].get("seek_position")
         length   = zone_check["now_playing"].get("length")
         fade_out_overlay(base, overlay, seek_pos, length)
 
-    # Idle loop — clean art with volume circle, touch to re-show text
     while True:
         zone_check = get_zone()
         if not zone_check or zone_check["state"] != "playing":
@@ -490,7 +575,6 @@ def display_roon(base, artist, album, track, seek_pos, length, radio=False, trac
         if current != compare:
             break
 
-        # Touch requested text re-display
         if _touch_show_text:
             _touch_show_text = False
             overlay = make_text_overlay(artist, album, track, source='roon')
@@ -502,7 +586,6 @@ def display_roon(base, artist, album, track, seek_pos, length, radio=False, trac
                 length   = zone_check2["now_playing"].get("length")
                 write_fb(composite(base, overlay, seek_pos, length))
                 time.sleep(1)
-            # Fade out again
             zone_check2 = get_zone()
             if zone_check2 and zone_check2["state"] == "playing":
                 seek_pos = zone_check2["now_playing"].get("seek_position")
@@ -521,9 +604,11 @@ def display_roon(base, artist, album, track, seek_pos, length, radio=False, trac
 
 
 def display_shazam(base, artist, album, track):
-    font_artist = ImageFont.truetype(FONT_BOLD, cfg["size_artist"])
-    font_album  = ImageFont.truetype(FONT_REG,  cfg["size_album"])
-    font_track  = ImageFont.truetype(FONT_REG,  cfg["size_track"])
+    track_bold, track_reg = get_font_paths(cfg.get("font_track", DEFAULT_FONT))
+    artist_font_path = track_bold if cfg.get("artist_bold", True) else track_reg
+    font_artist = ImageFont.truetype(artist_font_path, cfg["size_artist"])
+    font_album  = ImageFont.truetype(track_reg,  cfg["size_album"])
+    font_track  = ImageFont.truetype(track_reg,  cfg["size_track"])
 
     aw, _ = measure_text(artist, font_artist)
     lw, _ = measure_text(album,  font_album)
@@ -557,13 +642,13 @@ def display_shazam(base, artist, album, track):
     for _ in range(cfg["text_hold"]):
         time.sleep(1)
 
-    # Fade out shazam overlay too
     fade_out_overlay(base, overlay, None, None)
 
     clean = base.copy()
     rgba  = clean.convert('RGBA')
     draw  = ImageDraw.Draw(rgba)
-    font_icon = ImageFont.truetype(FONT_REG, 32)
+    _, track_reg = get_font_paths(cfg.get("font_track", DEFAULT_FONT))
+    font_icon = ImageFont.truetype(track_reg, 32)
     draw.text((W - 40, H - 40), '♩', font=font_icon, fill=(180, 180, 180, 200))
     write_fb(rgba.convert('RGB'))
 
