@@ -22,7 +22,6 @@ import subprocess
 
 CONFIG_FILE = os.path.expanduser("~/config.json")
 
-# --- Defaults ---
 _defaults = {
     "touch_swipe_min_dx":        250,
     "touch_swipe_max_dy":        200,
@@ -45,7 +44,6 @@ _defaults = {
 
 W = 1280
 
-# --- Shared state ---
 _show_text      = True
 _text_lock      = threading.Lock()
 _callback       = None
@@ -54,8 +52,9 @@ _thread         = None
 _bridge         = "http://192.168.8.118:3001"
 _zone_id        = None
 _output_id      = None
-_browser_proc   = None   # Xorg process
+_browser_proc   = None
 _browser_lock   = threading.Lock()
+_last_vol_pct   = 50.0
 
 
 def _load_touch_cfg():
@@ -72,11 +71,13 @@ def _load_touch_cfg():
     return cfg
 
 
-def configure(bridge, zone_id, output_id):
-    global _bridge, _zone_id, _output_id
+def configure(bridge, zone_id, output_id, vol_pct=None):
+    global _bridge, _zone_id, _output_id, _last_vol_pct
     _bridge    = bridge
     _zone_id   = zone_id
     _output_id = output_id
+    if vol_pct is not None:
+        _last_vol_pct = vol_pct
 
 
 def set_callback(fn):
@@ -104,7 +105,7 @@ def _launch_browser(url):
     global _browser_proc
     with _browser_lock:
         if _browser_proc is not None and _browser_proc.poll() is None:
-            return  # already open
+            return
         print(f"[Touch] Launching browser: {url}")
         try:
             _browser_proc = subprocess.Popen(
@@ -128,12 +129,10 @@ def _close_browser():
         try:
             subprocess.run(["pkill", "-f", "chromium"], capture_output=True)
             subprocess.run(["pkill", "Xorg"], capture_output=True)
-            # Clean up X lock file
-            for f in ["/tmp/.X1-lock"]:
-                try:
-                    os.remove(f)
-                except:
-                    pass
+            try:
+                os.remove("/tmp/.X1-lock")
+            except:
+                pass
         except Exception as e:
             print(f"[Touch] Browser close error: {e}")
         _browser_proc = None
@@ -151,6 +150,7 @@ def _find_touch_device():
                 abs_codes = [c for c, _ in caps[evdev.ecodes.EV_ABS]]
                 if evdev.ecodes.ABS_MT_POSITION_X in abs_codes:
                     print(f"[Touch] Found device: {dev.name} at {dev.path}")
+                    dev.grab()
                     return dev
         print("[Touch] No touch device found")
         return None
@@ -169,13 +169,16 @@ def _roon_get(endpoint, params=None):
 
 
 def _do_action(action, cfg):
+    global _last_vol_pct
     if action == "volume_up":
         if _output_id:
             _roon_get("change_volume_relative", {"volume": cfg["touch_vol_step"], "outputId": _output_id})
+            _last_vol_pct = min(100, _last_vol_pct + cfg["touch_vol_step"])
             print(f"[Touch] Volume +{cfg['touch_vol_step']}")
     elif action == "volume_down":
         if _output_id:
             _roon_get("change_volume_relative", {"volume": -cfg["touch_vol_step"], "outputId": _output_id})
+            _last_vol_pct = max(0, _last_vol_pct - cfg["touch_vol_step"])
             print(f"[Touch] Volume -{cfg['touch_vol_step']}")
     elif action == "next":
         if _zone_id:
@@ -249,8 +252,8 @@ def _touch_loop():
     import evdev
     from evdev import ecodes
 
-    last_tap_time  = 0
-    last_tap_zone  = None
+    last_tap_time = 0
+    last_tap_zone = None
 
     while _running:
         dev = _find_touch_device()
@@ -258,14 +261,14 @@ def _touch_loop():
             time.sleep(5)
             continue
 
-        touch_x      = 0
-        touch_y      = 0
-        start_x      = None
-        start_y      = None
-        start_time   = None
-        touching     = False
-        long_fired   = False
-        long_timer   = None
+        touch_x    = 0
+        touch_y    = 0
+        start_x    = None
+        start_y    = None
+        start_time = None
+        touching   = False
+        long_fired = False
+        long_timer = None
 
         def cancel_long_timer():
             nonlocal long_timer
@@ -292,21 +295,18 @@ def _touch_loop():
                         touch_y = event.value
                     elif event.code == ecodes.ABS_MT_TRACKING_ID:
                         if event.value != -1:
-                            # Touch start
                             touching   = True
                             long_fired = False
                             start_x    = touch_x
                             start_y    = touch_y
                             start_time = time.time()
-                            # Start long press timer
-                            cfg = _load_touch_cfg()
+                            cfg_now = _load_touch_cfg()
                             long_timer = threading.Timer(
-                                cfg["touch_long_press_ms"] / 1000.0,
+                                cfg_now["touch_long_press_ms"] / 1000.0,
                                 fire_long_press
                             )
                             long_timer.start()
                         else:
-                            # Touch end
                             cancel_long_timer()
                             if touching and start_x is not None and not long_fired:
                                 cfg      = _load_touch_cfg()
